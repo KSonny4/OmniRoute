@@ -295,7 +295,10 @@ function openaiToGeminiBase(
       getModelSpec(model)?.thinkingBudgetCap !== 0
     ) {
       result.generationConfig.thinkingConfig = {
-        thinkingBudget: getDefaultThinkingBudget(model) || capThinkingBudget(model, 24576),
+        thinkingBudget:
+          modelLower === "gemini-3.8-flash"
+            ? undefined
+            : getDefaultThinkingBudget(model) || capThinkingBudget(model, 24576),
         includeThoughts: true,
       };
     }
