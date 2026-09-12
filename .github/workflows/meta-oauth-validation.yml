@@ -31,7 +31,6 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import re
 
           def update(path, transform):
               p = Path(path)
@@ -162,7 +161,7 @@ jobs:
 
       - name: Lint changed Meta OAuth surface
         run: >-
-          npx eslint
+          npx eslint --suppressions-location config/quality/eslint-suppressions.json
           open-sse/executors/defaultResolver.ts
           open-sse/executors/muse-code.ts
           open-sse/services/museCodeAuth.ts
