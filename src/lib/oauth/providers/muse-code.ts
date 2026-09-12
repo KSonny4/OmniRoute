@@ -1,19 +1,12 @@
+import { MUSE_CODE_CONFIG } from "../constants/muse-code";
 import {
   META_MUSE_API_KEY_TTL_SECONDS,
-  META_MUSE_CLIENT_ID,
-  META_MUSE_DEVICE_AUTH_URL,
   META_MUSE_DEVICE_GRANT_TYPE,
-  META_MUSE_DEVICE_TOKEN_URL,
   mintMuseCodeApiKey,
 } from "@omniroute/open-sse/services/museCodeAuth.ts";
 
-export const MUSE_CODE_OAUTH_CONFIG = {
-  clientId: META_MUSE_CLIENT_ID,
-  deviceAuthorizationUrl: META_MUSE_DEVICE_AUTH_URL,
-  deviceTokenUrl: META_MUSE_DEVICE_TOKEN_URL,
-};
-
-type MuseCodeOAuthConfig = typeof MUSE_CODE_OAUTH_CONFIG;
+export const MUSE_CODE_OAUTH_CONFIG = MUSE_CODE_CONFIG;
+type MuseCodeOAuthConfig = typeof MUSE_CODE_CONFIG;
 
 interface DeviceCodeResponse {
   device_code: string;
@@ -52,7 +45,7 @@ async function parseJson(response: Response): Promise<Record<string, unknown>> {
 }
 
 export const museCode = {
-  config: MUSE_CODE_OAUTH_CONFIG,
+  config: MUSE_CODE_CONFIG,
   flowType: "device_code" as const,
 
   requestDeviceCode: async (config: MuseCodeOAuthConfig): Promise<DeviceCodeResponse> => {
@@ -114,9 +107,6 @@ export const museCode = {
     });
 
     const data = (await parseJson(response)) as DeviceTokenPayload;
-    // OIDC device endpoints commonly return 400 while authorization is still
-    // pending. Keep those OAuth protocol errors on the normal poll path so the
-    // shared OmniRoute device-flow handler can honour pending/slow_down.
     if (
       data.error === "authorization_pending" ||
       data.error === "slow_down" ||
@@ -133,21 +123,16 @@ export const museCode = {
     return { apiKey: await mintMuseCodeApiKey(tokens.access_token) };
   },
 
-  mapTokens: (tokens: DeviceTokenPayload, extra?: { apiKey?: string } | null) => {
-    if (!tokens.access_token || !extra?.apiKey) {
-      throw new Error("Meta Muse OAuth exchange did not produce inference credentials");
-    }
-    return {
-      accessToken: extra.apiKey,
-      // Meta's OIDC identity is the durable credential used to mint a fresh
-      // short-lived Model API key. Keep it in the encrypted refresh-token slot.
-      refreshToken: tokens.access_token,
-      expiresIn: META_MUSE_API_KEY_TTL_SECONDS,
-      providerSpecificData: {
-        authSource: "meta-oidc-device",
-      },
-    };
-  },
+  mapTokens: (tokens: DeviceTokenPayload = {}, extra?: { apiKey?: string } | null) => ({
+    accessToken: extra?.apiKey,
+    // Meta's OIDC identity is the durable credential used to mint a fresh
+    // short-lived Model API key. Keep it in the encrypted refresh-token slot.
+    refreshToken: tokens.access_token,
+    expiresIn: META_MUSE_API_KEY_TTL_SECONDS,
+    providerSpecificData: {
+      authSource: "meta-oidc-device",
+    },
+  }),
 };
 
 export default museCode;
