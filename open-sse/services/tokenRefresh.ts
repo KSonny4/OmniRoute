@@ -51,6 +51,7 @@ import { persistDiscoveredAntigravityProjectId } from "./antigravityProjectPersi
 import { refreshCodexToken } from "./tokenRefresh/providers/codex.ts";
 import { refreshCursorToken } from "./tokenRefresh/providers/cursor.ts";
 import { refreshOpenferenceToken } from "./tokenRefresh/providers/openference.ts";
+import { refreshMetaModelApiToken } from "./tokenRefresh/providers/metaModelApi.ts";
 import { refreshKiroToken } from "./tokenRefresh/providers/kiro.ts";
 import { refreshQoderToken } from "./tokenRefresh/providers/qoder.ts";
 import { refreshGitHubToken } from "./tokenRefresh/providers/github.ts";
@@ -66,6 +67,7 @@ export {
   refreshCodexToken,
   refreshCursorToken,
   refreshOpenferenceToken,
+  refreshMetaModelApiToken,
   refreshKiroToken,
   refreshQoderToken,
   refreshGitHubToken,
@@ -403,6 +405,9 @@ async function _getAccessTokenInternal(provider, credentials, log, proxyConfig: 
     case "openference":
       return await refreshOpenferenceToken(credentials.refreshToken, log, proxyConfig);
 
+    case "muse-code":
+      return await refreshMetaModelApiToken(credentials.refreshToken, log, proxyConfig);
+
     case "qoder":
       return await refreshQoderToken(credentials.refreshToken, log, proxyConfig);
 
@@ -458,6 +463,7 @@ export function supportsTokenRefresh(provider) {
     "claude",
     "codex",
     "openference",
+    "muse-code",
     "qoder",
     "github",
     "kiro",
