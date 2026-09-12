@@ -34,6 +34,20 @@ export const OAUTH_PROVIDERS = {
     authHint:
       "Sign in with xAI to use api.x.ai models such as Grok 4.5. This is separate from Grok Build JWT sessions, which use cli-chat-proxy.grok.com and grok-build model aliases.",
   },
+  "muse-code": {
+    id: "muse-code",
+    serviceKinds: ["llm"],
+    alias: "mc",
+    name: "Muse Code (Meta)",
+    icon: "auto_awesome",
+    color: "#0866FF",
+    textIcon: "MC",
+    website: "https://ai.meta.com/llama/",
+    subscriptionRisk: true,
+    riskNoticeVariant: "oauth",
+    authHint:
+      "Sign in with Meta using device authorization. OmniRoute exchanges the approved Meta identity token for a Model API key and re-mints that key automatically.",
+  },
   openference: {
     id: "openference",
     serviceKinds: ["llm"],
