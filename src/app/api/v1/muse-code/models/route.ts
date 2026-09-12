@@ -34,7 +34,7 @@ function buildModelCatalog(): MuseCodeModel[] {
   const data: MuseCodeModel[] = [];
 
   for (const model of muse_codeProvider.models) {
-    let family = "llama";
+    let family = model.id.startsWith("muse-") ? "muse" : "llama";
     if (model.id.includes("llama-4")) family = "llama-4";
     else if (model.id.includes("llama-3.3")) family = "llama-3.3";
     else if (model.id.includes("llama-3.2")) family = "llama-3.2";
