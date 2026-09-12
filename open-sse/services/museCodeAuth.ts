@@ -1,8 +1,3 @@
-export const META_MUSE_CLIENT_ID =
-  process.env.META_MUSE_OAUTH_CLIENT_ID?.trim() || "1031625952748946";
-
-export const META_MUSE_DEVICE_AUTH_URL = "https://auth.meta.com/oidc/device/authorization/";
-export const META_MUSE_DEVICE_TOKEN_URL = "https://auth.meta.com/oidc/device/token/";
 export const META_MUSE_API_KEY_URL = "https://api.meta.ai/muse-code/key";
 export const META_MUSE_MODELS_URL = "https://api.meta.ai/v1/models";
 export const META_MUSE_API_KEY_TTL_SECONDS = 24 * 60 * 60;
