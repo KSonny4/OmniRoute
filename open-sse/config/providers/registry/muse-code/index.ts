@@ -16,6 +16,7 @@ import { buildOpenAiCompatibleRegistryEntry } from "../../shared.ts";
 export const muse_codeProvider: RegistryEntry = buildOpenAiCompatibleRegistryEntry({
   id: "muse-code",
   alias: "mc",
+  baseUrl: "https://api.meta.ai/v1/responses",
   passthroughModels: true,
   reasoningTransport: "opaque",
   defaultContextLength: 1048576,
