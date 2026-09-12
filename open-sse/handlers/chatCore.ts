@@ -2709,12 +2709,13 @@ export async function handleChatCore({
     // `reasoning.default_effort`, captured by `detectDefaultThinkingEffort`) is the
     // lowest-priority default: it only fires when neither the suffix alias nor a
     // static operator default exists. See open-sse/services/defaultReasoningEffort.ts.
-    if (targetFormat === FORMATS.OPENAI) {
+    if (targetFormat === FORMATS.OPENAI || targetFormat === FORMATS.OPENAI_RESPONSES) {
       translatedBody = applyDefaultReasoningEffort(
         translatedBody,
         finalModelToUpstream,
         (modelInfo as { resolvedThinkingEffort?: string })?.resolvedThinkingEffort,
-        (modelInfo as { defaultThinkingEffort?: string })?.defaultThinkingEffort
+        (modelInfo as { defaultThinkingEffort?: string })?.defaultThinkingEffort,
+        targetFormat
       );
     }
   }

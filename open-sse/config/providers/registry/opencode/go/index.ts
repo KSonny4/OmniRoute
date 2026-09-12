@@ -157,6 +157,13 @@ export const opencode_goProvider: RegistryEntry = {
       supportsReasoning: true,
     },
     { id: "hy3-preview", name: "Hunyuan3 Preview" },
+    {
+      id: "muse-spark-1.3-contributor",
+      name: "Muse Spark 1.3 Contributor",
+      supportsReasoning: true,
+      supportedThinkingEfforts: ["minimal", "low", "medium", "high", "xhigh"],
+      targetFormat: "openai-responses",
+    },
     // Muse Spark 1.2 Contributor — base + effort-tier aliases from the OpenCode Go
     // registry (`opencode models opencode-go --verbose`; exact suffix set:
     // minimal/low/medium/high/xhigh, no max).

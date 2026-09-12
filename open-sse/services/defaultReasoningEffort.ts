@@ -13,6 +13,7 @@
 // chatCore.ts, after model resolution, so the *upstream* model's default is
 // used even when a combo/route substituted it.
 import { getModelSpec } from "@/shared/constants/modelSpecs.ts";
+import { FORMATS } from "../translator/formats.ts";
 
 /** True when `body` already expresses a reasoning-effort choice, in any known shape. */
 function hasExplicitReasoningField(body: Record<string, unknown>): boolean {
@@ -45,14 +46,31 @@ export function applyDefaultReasoningEffort<T extends Record<string, unknown>>(
   body: T,
   modelId: string,
   suffixEffort?: string | null,
-  syncedDefaultEffort?: string | null
+  syncedDefaultEffort?: string | null,
+  targetFormat: string = FORMATS.OPENAI
 ): T {
   if (!body || typeof body !== "object") return body;
-  if (hasExplicitReasoningField(body)) return body;
+  const responsesReasoning =
+    targetFormat === FORMATS.OPENAI_RESPONSES &&
+    body.reasoning !== null &&
+    typeof body.reasoning === "object" &&
+    !Array.isArray(body.reasoning)
+      ? (body.reasoning as Record<string, unknown>)
+      : undefined;
+  if (
+    responsesReasoning
+      ? body.reasoning_effort !== undefined ||
+        body.thinking !== undefined ||
+        responsesReasoning.effort !== undefined
+      : hasExplicitReasoningField(body)
+  )
+    return body;
 
   const defaultEffort =
     suffixEffort || getModelSpec(modelId)?.defaultReasoningEffort || syncedDefaultEffort;
   if (!defaultEffort) return body;
 
-  return { ...body, reasoning_effort: defaultEffort };
+  return targetFormat === FORMATS.OPENAI_RESPONSES
+    ? { ...body, reasoning: { ...responsesReasoning, effort: defaultEffort } }
+    : { ...body, reasoning_effort: defaultEffort };
 }
