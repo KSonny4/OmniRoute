@@ -1,10 +1,9 @@
-import { resolvePublicCred } from "@omniroute/open-sse/utils/publicCreds.ts";
-
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 const MODEL_API_KEY_TTL_SECONDS = 24 * 60 * 60;
+const META_OAUTH_CLIENT_ID = process.env.META_OAUTH_CLIENT_ID?.trim() || "1031625952748946";
 
 export const META_MODEL_API_CONFIG = {
-  clientId: resolvePublicCred("meta_model_api_id", "META_OAUTH_CLIENT_ID"),
+  clientId: META_OAUTH_CLIENT_ID,
   deviceCodeUrl: "https://auth.meta.com/oidc/device/authorization/",
   tokenUrl: "https://auth.meta.com/oidc/device/token/",
   apiKeyMintUrl: "https://api.meta.ai/muse-code/key",
