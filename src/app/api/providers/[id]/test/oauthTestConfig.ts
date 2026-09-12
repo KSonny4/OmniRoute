@@ -271,6 +271,16 @@ export const OAUTH_TEST_CONFIG: Record<string, OAuthTestConfigEntry> = {
     extraHeaders: { "User-Agent": "OmniRoute", Accept: "application/vnd.github+json" },
     refreshable: true,
   },
+  "muse-code": {
+    // The stored access token is the minted Meta Model API key, so list models
+    // to verify it without consuming inference quota.
+    url: "https://api.meta.ai/v1/models",
+    method: "GET",
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    extraHeaders: { "x-api-version": "1.0.0" },
+    refreshable: true,
+  },
   // Openference: first-party OAuth gateway — list models to verify the JWT without
   // consuming inference quota. 402 (no active plan) still means auth succeeded.
   openference: {
