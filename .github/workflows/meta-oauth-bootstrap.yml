@@ -1,0 +1,731 @@
+name: Bootstrap Meta OAuth implementation
+
+on:
+  push:
+    branches:
+      - feat/meta-model-api-oauth
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/meta-model-api-oauth
+          fetch-depth: 0
+
+      - name: Apply guarded Meta OAuth patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          ROOT = Path('.')
+
+          def p(rel):
+              return ROOT / rel
+
+          def read(rel):
+              return p(rel).read_text(encoding='utf-8')
+
+          def write(rel, text):
+              path = p(rel)
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_text(text, encoding='utf-8')
+
+          def replace_once(rel, old, new):
+              text = read(rel)
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{rel}: expected anchor exactly once, got {count}: {old!r}')
+              write(rel, text.replace(old, new, 1))
+
+          def regex_once(rel, pattern, repl, flags=0):
+              text = read(rel)
+              new, count = re.subn(pattern, repl, text, count=1, flags=flags)
+              if count != 1:
+                  raise SystemExit(f'{rel}: regex anchor matched {count} times: {pattern}')
+              write(rel, new)
+
+          # Public Meta native-app client id. This is a public OAuth client id,
+          # masked using OmniRoute's existing scanner-avoidance convention.
+          replace_once(
+              'open-sse/utils/publicCreds.ts',
+              '  openference_id: [0, 0, 0, 0, 0, 0, 0, 0, 0],\n  // Trae Cloud IDE',
+              '  openference_id: [0, 0, 0, 0, 0, 0, 0, 0, 0],\n'
+              '  // Meta Model API / Muse Code public OIDC device-flow client id.\n'
+              '  meta_model_api_id: [94, 93, 93, 88, 68, 93, 64, 77, 80, 31, 71, 65, 90, 85, 93, 85],\n'
+              '  // Trae Cloud IDE',
+          )
+
+          # OAuth implementation: Meta OIDC device flow -> Model API key mint.
+          write('src/lib/oauth/providers/muse-code-oauth.ts', r'''import { resolvePublicCred } from "@omniroute/open-sse/utils/publicCreds.ts";
+
+const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
+const MODEL_API_KEY_TTL_SECONDS = 24 * 60 * 60;
+
+export const META_MODEL_API_CONFIG = {
+  clientId: resolvePublicCred("meta_model_api_id", "META_OAUTH_CLIENT_ID"),
+  deviceCodeUrl: "https://auth.meta.com/oidc/device/authorization/",
+  tokenUrl: "https://auth.meta.com/oidc/device/token/",
+  apiKeyMintUrl: "https://api.meta.ai/muse-code/key",
+  apiVersion: "1.0.0",
+};
+
+type JsonRecord = Record<string, any>;
+
+async function readJson(response: Response): Promise<JsonRecord> {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    const value = JSON.parse(text);
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function errorDetail(data: JsonRecord, fallback: string): string {
+  for (const value of [
+    data.error_description,
+    data.detail,
+    data.message,
+    typeof data.error === "string" ? data.error : data.error?.message,
+  ]) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return fallback;
+}
+
+export async function mintMetaModelApiKey(identityToken: string): Promise<string> {
+  const response = await fetch(META_MODEL_API_CONFIG.apiKeyMintUrl, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${identityToken}`,
+      "Content-Type": "application/json",
+      "x-api-version": META_MODEL_API_CONFIG.apiVersion,
+    },
+    body: "{}",
+  });
+  const data = await readJson(response);
+
+  if (!response.ok) {
+    throw new Error(
+      `Meta Model API key mint failed (HTTP ${response.status}): ${errorDetail(
+        data,
+        response.statusText || "unknown error"
+      )}`
+    );
+  }
+
+  const apiKey = typeof data.api_key === "string" ? data.api_key.trim() : "";
+  if (!apiKey) {
+    const setup =
+      typeof data.action_url === "string" && data.action_url
+        ? ` Complete setup at ${data.action_url}.`
+        : "";
+    throw new Error(`Meta did not issue a Model API key.${setup}`);
+  }
+  return apiKey;
+}
+
+export const museCodeOauth = {
+  config: META_MODEL_API_CONFIG,
+  flowType: "device_code" as const,
+
+  requestDeviceCode: async (config) => {
+    const response = await fetch(config.deviceCodeUrl, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ client_id: config.clientId }),
+    });
+    const data = await readJson(response);
+
+    if (!response.ok) {
+      throw new Error(
+        `Meta device authorization failed (HTTP ${response.status}): ${errorDetail(
+          data,
+          response.statusText || "unknown error"
+        )}`
+      );
+    }
+    if (!data.device_code || !data.user_code || !data.verification_uri) {
+      throw new Error("Meta device authorization returned an incomplete response");
+    }
+    return data;
+  },
+
+  pollToken: async (config, deviceCode) => {
+    const response = await fetch(config.tokenUrl, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: DEVICE_CODE_GRANT,
+        device_code: deviceCode,
+        client_id: config.clientId,
+      }),
+    });
+
+    return { ok: response.ok, data: await readJson(response) };
+  },
+
+  postExchange: async (tokens) => {
+    const identityToken = typeof tokens.access_token === "string" ? tokens.access_token : "";
+    if (!identityToken) throw new Error("Meta device flow returned no identity token");
+    return { apiKey: await mintMetaModelApiKey(identityToken) };
+  },
+
+  mapTokens: (tokens, extra) => {
+    const identityToken = typeof tokens.access_token === "string" ? tokens.access_token : "";
+    const apiKey = typeof extra?.apiKey === "string" ? extra.apiKey : "";
+    if (!identityToken || !apiKey) {
+      throw new Error("Meta OAuth token mapping is missing required credentials");
+    }
+
+    return {
+      accessToken: apiKey,
+      refreshToken: identityToken,
+      expiresIn: MODEL_API_KEY_TTL_SECONDS,
+      tokenType: "Bearer",
+      name: "Meta Model API",
+      providerSpecificData: {
+        apiVersion: META_MODEL_API_CONFIG.apiVersion,
+      },
+    };
+  },
+};
+''')
+
+          replace_once(
+              'src/lib/oauth/providers/index.ts',
+              'import { openference } from "./openference";\n',
+              'import { openference } from "./openference";\nimport { museCodeOauth } from "./muse-code-oauth";\n',
+          )
+          replace_once(
+              'src/lib/oauth/providers/index.ts',
+              '  openference,\n  "codebuddy-cn": codebuddyCn,\n',
+              '  openference,\n  "muse-code": museCodeOauth,\n  "codebuddy-cn": codebuddyCn,\n',
+          )
+
+          # Dashboard device-code flow.
+          replace_once(
+              'src/shared/components/OAuthModal.tsx',
+              '  "ghe-copilot",\n  "grok-cli",\n]);',
+              '  "ghe-copilot",\n  "grok-cli",\n  "muse-code",\n]);',
+          )
+
+          # Muse Code becomes an OAuth-primary dual-auth provider. Manual API keys
+          # stay supported through the existing dual-auth UI path.
+          oauth_entry = r'''  "muse-code": {
+    id: "muse-code",
+    serviceKinds: ["llm"],
+    alias: "mc",
+    name: "Muse Code (Meta)",
+    icon: "auto_awesome",
+    color: "#0866FF",
+    textIcon: "MC",
+    website: "https://ai.meta.com/llama/",
+    subscriptionRisk: true,
+    riskNoticeVariant: "oauth",
+    authHint:
+      "Sign in with Meta using device authorization, or add a Meta Model API key manually. OmniRoute mints and refreshes the Model API key after OAuth approval.",
+  },
+'''
+          replace_once(
+              'src/shared/constants/providers/oauth.ts',
+              '  openference: {\n',
+              oauth_entry + '  openference: {\n',
+          )
+
+          # Remove the old API-key-only catalogue card. It is now represented by
+          # the OAuth card with a Manual API key secondary action.
+          rel = 'src/shared/constants/providers/apikey/frontier-labs.ts'
+          text = read(rel)
+          start = text.find('  "muse-code": {\n')
+          if start < 0:
+              raise SystemExit(f'{rel}: muse-code block not found')
+          end_marker = '\n  },\n};\n'
+          end = text.find(end_marker, start)
+          if end < 0:
+              raise SystemExit(f'{rel}: muse-code end marker not found')
+          # The Muse block is the final entry in this leaf, so retain the object close.
+          text = text[:start] + '};\n' + text[end + len(end_marker):]
+          write(rel, text)
+
+          replace_once(
+              'src/shared/constants/providers.ts',
+              'const DUAL_AUTH_PROVIDER_IDS = new Set(["clinepass", "codebuddy-cn", "xai"]);',
+              'const DUAL_AUTH_PROVIDER_IDS = new Set(["clinepass", "codebuddy-cn", "xai", "muse-code"]);',
+          )
+
+          # Provider registry. OAuth is primary, while direct apiKey credentials
+          # are still accepted by DefaultExecutor for dual-auth connections.
+          write('open-sse/config/providers/registry/muse-code/index.ts', r'''import type { RegistryEntry } from "../../shared.ts";
+import { resolvePublicCred } from "../../shared.ts";
+
+const MUSE_THINKING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"] as const;
+
+export const muse_codeProvider: RegistryEntry = {
+  id: "muse-code",
+  alias: "mc",
+  format: "openai",
+  executor: "default",
+  baseUrl: "https://api.meta.ai/v1/chat/completions",
+  responsesBaseUrl: "https://api.meta.ai/v1/responses",
+  authType: "oauth",
+  authHeader: "bearer",
+  passthroughModels: true,
+  reasoningTransport: "opaque",
+  defaultContextLength: 1_048_576,
+  oauth: {
+    clientIdEnv: "META_OAUTH_CLIENT_ID",
+    clientIdDefault: resolvePublicCred("meta_model_api_id", "META_OAUTH_CLIENT_ID"),
+    tokenUrl: "https://auth.meta.com/oidc/device/token/",
+    authUrl: "https://auth.meta.com",
+  },
+  models: [
+    {
+      id: "muse-spark-1.3",
+      name: "Muse Spark 1.3",
+      contextLength: 1_048_576,
+      maxOutputTokens: 256_000,
+      supportsReasoning: true,
+      supportedThinkingEfforts: MUSE_THINKING_EFFORTS,
+      supportsXHighEffort: true,
+      toolCalling: true,
+      supportsVision: true,
+      targetFormat: "openai-responses",
+      unsupportedParams: ["logprobs", "topLogprobs", "logitBias"],
+    },
+    {
+      id: "muse-spark-1.3-contributor",
+      name: "Muse Spark 1.3 Contributor",
+      contextLength: 1_048_576,
+      maxOutputTokens: 256_000,
+      supportsReasoning: true,
+      supportedThinkingEfforts: MUSE_THINKING_EFFORTS,
+      supportsXHighEffort: true,
+      toolCalling: true,
+      supportsVision: true,
+      targetFormat: "openai-responses",
+      unsupportedParams: ["logprobs", "topLogprobs", "logitBias"],
+    },
+    {
+      id: "muse-spark-1.2",
+      name: "Muse Spark 1.2",
+      contextLength: 1_048_576,
+      maxOutputTokens: 256_000,
+      supportsReasoning: true,
+      supportedThinkingEfforts: MUSE_THINKING_EFFORTS,
+      supportsXHighEffort: true,
+      toolCalling: true,
+      supportsVision: true,
+      targetFormat: "openai-responses",
+      unsupportedParams: ["logprobs", "topLogprobs", "logitBias"],
+    },
+    {
+      id: "muse-spark-1.2-contributor",
+      name: "Muse Spark 1.2 Contributor",
+      contextLength: 1_048_576,
+      maxOutputTokens: 256_000,
+      supportsReasoning: true,
+      supportedThinkingEfforts: MUSE_THINKING_EFFORTS,
+      supportsXHighEffort: true,
+      toolCalling: true,
+      supportsVision: true,
+      targetFormat: "openai-responses",
+      unsupportedParams: ["logprobs", "topLogprobs", "logitBias"],
+    },
+    {
+      id: "muse-spark-1.1",
+      name: "Muse Spark 1.1",
+      contextLength: 1_048_576,
+      maxOutputTokens: 256_000,
+      supportsReasoning: true,
+      supportedThinkingEfforts: MUSE_THINKING_EFFORTS,
+      supportsXHighEffort: true,
+      toolCalling: true,
+      supportsVision: true,
+      targetFormat: "openai-responses",
+      unsupportedParams: ["logprobs", "topLogprobs", "logitBias"],
+    },
+    // Preserve the old catalogue entries as backwards-compatible aliases while
+    // Meta's live Muse catalogue is transitioning.
+    {
+      id: "llama-4-maverick",
+      name: "Llama 4 Maverick",
+      contextLength: 1_048_576,
+      maxOutputTokens: 131_072,
+      supportsReasoning: true,
+      supportsXHighEffort: true,
+      toolCalling: true,
+      supportsVision: true,
+      targetFormat: "openai-responses",
+      unsupportedParams: ["logprobs", "topLogprobs", "logitBias"],
+    },
+    {
+      id: "llama-4-scout",
+      name: "Llama 4 Scout",
+      contextLength: 1_048_576,
+      maxOutputTokens: 131_072,
+      supportsReasoning: true,
+      supportsXHighEffort: true,
+      toolCalling: true,
+      supportsVision: true,
+      targetFormat: "openai-responses",
+      unsupportedParams: ["logprobs", "topLogprobs", "logitBias"],
+    },
+    {
+      id: "llama-3.3-70b",
+      name: "Llama 3.3 70B",
+      contextLength: 131_072,
+      maxOutputTokens: 32_768,
+      supportsReasoning: false,
+      toolCalling: true,
+      targetFormat: "openai-responses",
+      unsupportedParams: ["logprobs", "topLogprobs"],
+    },
+    {
+      id: "llama-3.1-405b",
+      name: "Llama 3.1 405B",
+      contextLength: 131_072,
+      maxOutputTokens: 32_768,
+      supportsReasoning: false,
+      toolCalling: true,
+      targetFormat: "openai-responses",
+      unsupportedParams: ["logprobs", "topLogprobs"],
+    },
+    {
+      id: "llama-3.1-70b",
+      name: "Llama 3.1 70B",
+      contextLength: 131_072,
+      maxOutputTokens: 32_768,
+      supportsReasoning: false,
+      toolCalling: true,
+      targetFormat: "openai-responses",
+      unsupportedParams: ["logprobs", "topLogprobs"],
+    },
+    {
+      id: "llama-3.1-8b",
+      name: "Llama 3.1 8B",
+      contextLength: 131_072,
+      maxOutputTokens: 32_768,
+      supportsReasoning: false,
+      toolCalling: true,
+      targetFormat: "openai-responses",
+      unsupportedParams: ["logprobs", "topLogprobs"],
+    },
+    {
+      id: "llama-3.2-90b-vision",
+      name: "Llama 3.2 90B Vision",
+      contextLength: 131_072,
+      maxOutputTokens: 32_768,
+      supportsReasoning: false,
+      toolCalling: true,
+      supportsVision: true,
+      targetFormat: "openai-responses",
+      unsupportedParams: ["logprobs", "topLogprobs"],
+    },
+    {
+      id: "llama-3.2-11b-vision",
+      name: "Llama 3.2 11B Vision",
+      contextLength: 131_072,
+      maxOutputTokens: 32_768,
+      supportsReasoning: false,
+      toolCalling: true,
+      supportsVision: true,
+      targetFormat: "openai-responses",
+      unsupportedParams: ["logprobs", "topLogprobs"],
+    },
+  ],
+};
+''')
+
+          # Re-mint the short-lived Model API key from the longer-lived Meta identity token.
+          write('open-sse/services/tokenRefresh/providers/metaModelApi.ts', r'''import { runWithProxyContext } from "../../../utils/proxyFetch.ts";
+
+const META_API_KEY_MINT_URL = "https://api.meta.ai/muse-code/key";
+const META_API_VERSION = "1.0.0";
+const META_API_KEY_TTL_SECONDS = 24 * 60 * 60;
+
+export async function refreshMetaModelApiToken(identityToken, log, proxyConfig: unknown = null) {
+  try {
+    const response = await runWithProxyContext(proxyConfig, () =>
+      fetch(META_API_KEY_MINT_URL, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${identityToken}`,
+          "Content-Type": "application/json",
+          "x-api-version": META_API_VERSION,
+        },
+        body: "{}",
+      })
+    );
+
+    const text = await response.text();
+    let data: any = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {}
+
+    if (!response.ok) {
+      const errorCode =
+        typeof data?.error === "string"
+          ? data.error
+          : data?.error?.code || data?.code || `http_${response.status}`;
+      if (response.status === 401 || response.status === 403) {
+        log?.error?.(
+          "TOKEN_REFRESH",
+          "Meta identity token is no longer authorised. Re-authentication required.",
+          { status: response.status, errorCode }
+        );
+        return { error: "unrecoverable_refresh_error", code: errorCode };
+      }
+      log?.error?.("TOKEN_REFRESH", "Failed to re-mint Meta Model API key", {
+        status: response.status,
+        error: text,
+      });
+      return null;
+    }
+
+    const apiKey = typeof data?.api_key === "string" ? data.api_key.trim() : "";
+    if (!apiKey) {
+      log?.error?.("TOKEN_REFRESH", "Meta key mint response contained no api_key");
+      return null;
+    }
+
+    return {
+      accessToken: apiKey,
+      refreshToken: identityToken,
+      expiresIn: META_API_KEY_TTL_SECONDS,
+    };
+  } catch (error) {
+    log?.error?.(
+      "TOKEN_REFRESH",
+      `Network error re-minting Meta Model API key: ${error instanceof Error ? error.message : String(error)}`
+    );
+    return null;
+  }
+}
+''')
+
+          replace_once(
+              'open-sse/services/tokenRefresh.ts',
+              'import { refreshOpenferenceToken } from "./tokenRefresh/providers/openference.ts";\n',
+              'import { refreshOpenferenceToken } from "./tokenRefresh/providers/openference.ts";\n'
+              'import { refreshMetaModelApiToken } from "./tokenRefresh/providers/metaModelApi.ts";\n',
+          )
+          replace_once(
+              'open-sse/services/tokenRefresh.ts',
+              '  refreshOpenferenceToken,\n  refreshKiroToken,\n',
+              '  refreshOpenferenceToken,\n  refreshMetaModelApiToken,\n  refreshKiroToken,\n',
+          )
+          replace_once(
+              'open-sse/services/tokenRefresh.ts',
+              '    case "openference":\n      return await refreshOpenferenceToken(credentials.refreshToken, log, proxyConfig);\n\n    case "qoder":',
+              '    case "openference":\n      return await refreshOpenferenceToken(credentials.refreshToken, log, proxyConfig);\n\n'
+              '    case "muse-code":\n      return await refreshMetaModelApiToken(credentials.refreshToken, log, proxyConfig);\n\n'
+              '    case "qoder":',
+          )
+          replace_once(
+              'open-sse/services/tokenRefresh.ts',
+              '    "openference",\n    "qoder",\n',
+              '    "openference",\n    "muse-code",\n    "qoder",\n',
+          )
+
+          # Connection test against Meta's model catalogue.
+          replace_once(
+              'src/app/api/providers/[id]/test/oauthTestConfig.ts',
+              '  // Openference: first-party OAuth gateway',
+              '  "muse-code": {\n'
+              '    url: "https://api.meta.ai/v1/models",\n'
+              '    method: "GET",\n'
+              '    authHeader: "Authorization",\n'
+              '    authPrefix: "Bearer ",\n'
+              '    extraHeaders: { "x-api-version": "1.0.0" },\n'
+              '    refreshable: true,\n'
+              '  },\n'
+              '  // Openference: first-party OAuth gateway',
+          )
+
+          # Muse-compatible catalogue metadata now includes Muse model families.
+          replace_once(
+              'src/app/api/v1/muse-code/models/route.ts',
+              '    let family = "llama";\n    if (model.id.includes("llama-4")) family = "llama-4";',
+              '    let family = model.id.startsWith("muse-") ? "muse" : "llama";\n'
+              '    if (model.id.includes("llama-4")) family = "llama-4";',
+          )
+
+          # Existing registry test now expects OAuth-primary dual auth.
+          replace_once(
+              'tests/unit/muse-code-provider.test.ts',
+              'test("muse-code provider uses apikey auth", () => {\n  assert.equal(muse_codeProvider.authType, "apikey");\n  assert.equal(muse_codeProvider.authHeader, "bearer");\n});',
+              'test("muse-code provider uses OAuth-primary bearer auth", () => {\n'
+              '  assert.equal(muse_codeProvider.authType, "oauth");\n'
+              '  assert.equal(muse_codeProvider.authHeader, "bearer");\n'
+              '});',
+          )
+
+          write('tests/unit/muse-code-oauth-provider.test.ts', r'''import test from "node:test";
+import assert from "node:assert/strict";
+
+import { requestDeviceCode, pollForToken } from "../../src/lib/oauth/providers.ts";
+import PROVIDERS from "../../src/lib/oauth/providers/index.ts";
+import {
+  META_MODEL_API_CONFIG,
+  museCodeOauth,
+} from "../../src/lib/oauth/providers/muse-code-oauth.ts";
+import { OAUTH_PROVIDERS } from "../../src/shared/constants/providers/oauth.ts";
+import { supportsDualAuthProvider } from "../../src/shared/constants/providers.ts";
+import { muse_codeProvider } from "../../open-sse/config/providers/registry/muse-code/index.ts";
+import {
+  refreshMetaModelApiToken,
+  supportsTokenRefresh,
+} from "../../open-sse/services/tokenRefresh.ts";
+import { OAUTH_TEST_CONFIG } from "../../src/app/api/providers/[id]/test/oauthTestConfig.ts";
+
+const originalFetch = globalThis.fetch;
+
+test.afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
+test("Meta OAuth requests a device code with the public client id", async () => {
+  globalThis.fetch = async (input, init) => {
+    assert.equal(String(input), META_MODEL_API_CONFIG.deviceCodeUrl);
+    assert.equal(init?.method, "POST");
+    const body = init?.body as URLSearchParams;
+    assert.equal(body.get("client_id"), META_MODEL_API_CONFIG.clientId);
+    return Response.json({
+      device_code: "device-123",
+      user_code: "ABCD-EFGH",
+      verification_uri: "https://auth.meta.com/device",
+      expires_in: 600,
+      interval: 5,
+    });
+  };
+
+  const data = await requestDeviceCode("muse-code");
+  assert.equal(data.device_code, "device-123");
+  assert.equal(data.user_code, "ABCD-EFGH");
+});
+
+test("Meta OAuth mints a Model API key after device approval", async () => {
+  const calls: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    calls.push(url);
+
+    if (url === META_MODEL_API_CONFIG.tokenUrl) {
+      const body = init?.body as URLSearchParams;
+      assert.equal(
+        body.get("grant_type"),
+        "urn:ietf:params:oauth:grant-type:device_code"
+      );
+      assert.equal(body.get("device_code"), "device-123");
+      assert.equal(body.get("client_id"), META_MODEL_API_CONFIG.clientId);
+      return Response.json({ access_token: "meta-identity-token", token_type: "Bearer" });
+    }
+
+    if (url === META_MODEL_API_CONFIG.apiKeyMintUrl) {
+      assert.equal(init?.headers?.["Authorization"], "Bearer meta-identity-token");
+      assert.equal(init?.headers?.["x-api-version"], "1.0.0");
+      return Response.json({ api_key: "meta-model-api-key" });
+    }
+
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  const result = await pollForToken("muse-code", "device-123", "ignored-verifier", undefined);
+  assert.equal(result.success, true);
+  assert.equal(result.tokens.accessToken, "meta-model-api-key");
+  assert.equal(result.tokens.refreshToken, "meta-identity-token");
+  assert.equal(result.tokens.expiresIn, 86_400);
+  assert.deepEqual(calls, [META_MODEL_API_CONFIG.tokenUrl, META_MODEL_API_CONFIG.apiKeyMintUrl]);
+});
+
+test("Meta OAuth key refresh re-mints from the identity token", async () => {
+  globalThis.fetch = async (input, init) => {
+    assert.equal(String(input), META_MODEL_API_CONFIG.apiKeyMintUrl);
+    assert.equal(init?.headers?.["Authorization"], "Bearer meta-identity-token");
+    return Response.json({ api_key: "meta-model-api-key-2" });
+  };
+
+  const refreshed = await refreshMetaModelApiToken("meta-identity-token", null, null);
+  assert.equal(refreshed?.accessToken, "meta-model-api-key-2");
+  assert.equal(refreshed?.refreshToken, "meta-identity-token");
+  assert.equal(refreshed?.expiresIn, 86_400);
+  assert.equal(supportsTokenRefresh("muse-code"), true);
+});
+
+test("Muse Code is exposed as one OAuth-primary dual-auth provider", () => {
+  assert.ok(PROVIDERS["muse-code"]);
+  assert.equal(PROVIDERS["muse-code"], museCodeOauth);
+  assert.ok(OAUTH_PROVIDERS["muse-code"]);
+  assert.equal(supportsDualAuthProvider("muse-code"), true);
+  assert.equal(muse_codeProvider.authType, "oauth");
+});
+
+test("Muse Code registry includes current Muse Spark models", () => {
+  const ids = new Set((muse_codeProvider.models || []).map((model) => model.id));
+  assert.ok(ids.has("muse-spark-1.3"));
+  assert.ok(ids.has("muse-spark-1.3-contributor"));
+  assert.equal(muse_codeProvider.responsesBaseUrl, "https://api.meta.ai/v1/responses");
+});
+
+test("Test Connection supports Muse Code OAuth", () => {
+  assert.ok((OAUTH_TEST_CONFIG as Record<string, unknown>)["muse-code"]);
+});
+''')
+
+          write('changelog.d/features/meta-model-api-oauth.md',
+                '- **feat(muse-code):** add Meta Model API OAuth device login, automatic API-key mint/refresh, and Muse Spark catalogue support.\n')
+
+          # Remove this bootstrap workflow from the final feature commit.
+          p('.github/workflows/meta-oauth-bootstrap.yml').unlink()
+          PY
+
+      - name: Check patch formatting
+        run: git diff --check
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run focused tests
+        env:
+          DISABLE_SQLITE_AUTO_BACKUP: 'true'
+        run: >-
+          node --max-old-space-size=8192
+          --import tsx/esm
+          --import ./open-sse/utils/setupPolyfill.ts
+          --import ./tests/_setup/isolateDataDir.ts
+          --test --test-force-exit
+          tests/unit/muse-code-provider.test.ts
+          tests/unit/muse-code-oauth-provider.test.ts
+
+      - name: Commit implementation
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(muse-code): add Meta OAuth support"
+          git push origin HEAD:feat/meta-model-api-oauth
