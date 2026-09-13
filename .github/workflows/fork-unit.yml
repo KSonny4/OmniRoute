@@ -1,0 +1,41 @@
+name: Fork Unit Tests
+
+# Temporary helper: run the full unit suite for the fork branch in GitHub
+# instead of locally. Manual dispatch only; remove before merge.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  OMNIROUTE_SKIP_SYSTEM_TRUST: "1"
+
+jobs:
+  unit:
+    name: Unit Tests (${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      JWT_SECRET: ci-test-secret-with-sufficient-length-for-validation
+      API_KEY_SECRET: ci-test-api-key-secret-long
+      DISABLE_SQLITE_AUTO_BACKUP: "true"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check:node-runtime
+      - name: Unit tests (shard ${{ matrix.shard }}/4)
+        env:
+          TEST_SHARD: ${{ matrix.shard }}/4
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: npm run test:unit:ci:shard
