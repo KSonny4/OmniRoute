@@ -780,3 +780,17 @@ This version has breaking changes — APIs, conventions, and file structure may 
 This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
 
 <!-- END:nextjs-agent-rules -->
+
+## Shared guidance and Context Fabric (prepare-only, L1 informative, app-service)
+
+Owner agents use `KSonny4/engineering-guidance` at reviewed merged revision
+`656d5569f261afb75f7c7685bea55e1e71518f9b`, resolving `AGENTS.md` plus every
+playbook whose explicit task/risk trigger applies at that same revision.
+Public contributors keep the normal local workflow above with no private
+access; owner-only configuration lives in private client settings, never in
+this file. Existing active/audited sessions keep their pins.
+
+Fabric interface `v0.1` is a PROPOSAL (shared runtime unpublished,
+undeployed). No endpoint is configured here, no source is registered, and no
+indexing/loading claim follows from this section. This fork never touches the
+upstream repository; upstream conventions are read-only context.
