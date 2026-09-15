@@ -42,4 +42,6 @@ jobs:
           context: .
           target: runner-web
           push: true
+          build-args: |
+            OMNIROUTE_USE_TURBOPACK=0
           tags: ghcr.io/ksonny4/omniroute-meta:${{ inputs.tag }}
