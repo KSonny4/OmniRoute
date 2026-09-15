@@ -276,6 +276,19 @@ export const OAUTH_PROVIDERS = {
       "Requires the Devin CLI binary. Run `devin auth login` to authenticate, or provide your WINDSURF_API_KEY. Install: https://cli.devin.ai",
     website: "https://cli.devin.ai",
   },
+  "muse-code": {
+    id: "muse-code",
+    alias: "mc",
+    name: "Muse Code (Meta)",
+    icon: "auto_awesome",
+    color: "#0866FF",
+    textIcon: "MC",
+    website: "https://github.com/meta-llama/llama-stack",
+    subscriptionRisk: true,
+    riskNoticeVariant: "oauth",
+    authHint:
+      "Sign in with your Meta account via the device-code flow, or paste a direct Muse Model API key. OAuth keeps the Meta identity token so the daily Model API key re-mints automatically.",
+  },
   "codebuddy-cn": {
     id: "codebuddy-cn",
     alias: "cbcn",
