@@ -11,6 +11,7 @@ import { CodexAppServerExecutor } from "./codex-app-server.ts";
 import { CursorExecutor } from "./cursor.ts";
 import { TraeExecutor } from "./trae.ts";
 import { DefaultExecutor } from "./default.ts";
+import { MuseCodeExecutor } from "./muse-code.ts";
 import { BedrockExecutor } from "./bedrock.ts";
 import { GlmExecutor } from "./glm.ts";
 import { PollinationsExecutor } from "./pollinations.ts";
@@ -284,7 +285,11 @@ export function getExecutor(provider) {
     (err as Error & { status?: number }).status = 400;
     throw err;
   }
-  if (!defaultCache.has(provider)) defaultCache.set(provider, new DefaultExecutor(provider));
+  if (!defaultCache.has(provider))
+    defaultCache.set(
+      provider,
+      provider === "muse-code" ? new MuseCodeExecutor() : new DefaultExecutor(provider)
+    );
   return defaultCache.get(provider);
 }
 
