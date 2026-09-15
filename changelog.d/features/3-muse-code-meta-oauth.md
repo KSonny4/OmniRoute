@@ -1,0 +1,1 @@
+- Add Muse Code (Meta) OAuth with device flow and automatic daily Model API key re-mint, Muse Spark 1.x catalog (1M context) replacing the stale CLI-era llama fallback list, and dashboard OAuth card + device-code menus (#3).
