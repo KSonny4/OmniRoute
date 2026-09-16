@@ -21,7 +21,7 @@ import {
 import { resolvePublicCred } from "@omniroute/open-sse/utils/publicCreds.ts";
 import { CURSOR_AGENT_CLI_VERSION } from "@omniroute/open-sse/utils/cursorAgentCliVersion.ts";
 import { buildGitLabOAuthEndpoints, GITLAB_DUO_DEFAULT_BASE_URL } from "../gitlab";
-
+export { MUSE_CODE_CONFIG } from "./muse-code";
 /**
  * OAuth Configuration Constants
  *
@@ -517,6 +517,7 @@ export const PROVIDERS = {
   DEVIN_CLI: "devin-cli",
   TRAE: "trae",
   CODEBUDDY_CN: "codebuddy-cn",
+  MUSE_CODE: "muse-code",
   GROK_CLI: "grok-cli",
   XAI_OAUTH: "xai-oauth",
   OPENFERENCE: "openference",
